@@ -92,8 +92,25 @@
       containerSelectors: ["main", '[class*="chat"]', '[class*="conversation"]'],
       userMessageSelectors: [
         '[data-testid*="user"]',
+        '[data-testid*="query"]',
         '[class*="user-message"]',
-        '[class*="question"]'
+        '[class*="question"]',
+        '[class*="query"]',
+        '[class*="user"]'
+      ]
+    },
+    {
+      label: "千问",
+      hosts: ["tongyi.aliyun.com", "www.tongyi.com"],
+      containerSelectors: ["main", '[class*="chat"]', '[class*="conversation"]', '[class*="message"]'],
+      userMessageSelectors: [
+        '[data-testid*="user"]',
+        '[data-testid*="query"]',
+        '[class*="user-message"]',
+        '[class*="message-user"]',
+        '[class*="question"]',
+        '[class*="query"]',
+        '[class*="user"]'
       ]
     }
   ];
@@ -113,13 +130,16 @@
 
   const MIN_PANEL_HEIGHT = 180;
   const EDGE_RESIZE_HIT_SIZE = 10;
+  const SUPPORTED_HOSTS = new Set(
+    SITE_RULES.flatMap((rule) => rule.hosts)
+  );
 
   bootstrap().catch((error) => {
     console.error("[AI Chat Context Sidebar] 初始化失败", error);
   });
 
   async function bootstrap() {
-    if (window.top !== window.self || document.getElementById(rootId)) {
+    if (window.top !== window.self || document.getElementById(rootId) || !SUPPORTED_HOSTS.has(location.host)) {
       return;
     }
 
@@ -179,17 +199,24 @@
       }
     });
 
-    state.list.addEventListener("wheel", (event) => {
+    state.panel.addEventListener("wheel", (event) => {
       event.preventDefault();
       state.list.scrollTop += event.deltaY;
     }, { passive: false });
   }
 
   function bindDragAndResizeEvents() {
-    state.header.addEventListener("mousedown", (event) => {
+    state.root.addEventListener("mousedown", (event) => {
       if (event.button !== 0 || event.target.closest("button")) {
         return;
       }
+      const mode = getResizeMode(event);
+      if (mode) {
+        startResize(event, mode);
+        return;
+      }
+
+      // 在侧栏内非按钮区域长按即可上下拖动整个侧栏
       startDrag(event);
     });
 
@@ -198,18 +225,13 @@
         return;
       }
       const mode = getResizeMode(event);
-      state.root.style.cursor = mode ? "ns-resize" : "";
-    });
-
-    state.root.addEventListener("mousedown", (event) => {
-      if (event.button !== 0 || event.target.closest(".aics-header")) {
-        return;
+      if (mode) {
+        state.root.style.cursor = "ns-resize";
+      } else if (event.target.closest("button")) {
+        state.root.style.cursor = "";
+      } else {
+        state.root.style.cursor = "grab";
       }
-      const mode = getResizeMode(event);
-      if (!mode) {
-        return;
-      }
-      startResize(event, mode);
     });
   }
 
@@ -456,6 +478,18 @@
       return queryDoubaoFallbackMessages(container);
     }
 
+    if (currentRule?.label === "Gemini") {
+      return queryGeminiFallbackMessages(container);
+    }
+
+    if (currentRule?.label === "千问") {
+      return queryQianwenFallbackMessages(container);
+    }
+
+    if (currentRule?.label === "元宝") {
+      return queryYuanbaoFallbackMessages(container);
+    }
+
     return sortByDomOrder(filterNestedElements(Array.from(container.querySelectorAll("article, li, section, div"))
       .filter((element) => {
         if (!isLikelyUserMessage(element)) {
@@ -503,6 +537,46 @@
       return text.length >= 3 && text.length <= 12000;
     }
 
+    if (isGeminiHost()) {
+      if (/(assistant|answer|reply|markdown|model-response|response-container|thought|reason|output)/.test(markerText)) {
+        return false;
+      }
+      if (/(title|topic|session|history|sidebar|menu|header)/.test(markerText)) {
+        return false;
+      }
+      if (/(user|query|question|request)/.test(markerText)) {
+        return true;
+      }
+      return false;
+    }
+
+    if (isQianwenHost()) {
+      if (/(assistant|answer|reply|markdown|thought|reason|output)/.test(markerText)) {
+        return false;
+      }
+      if (/(title|topic|session|history|sidebar|menu)/.test(markerText)) {
+        return false;
+      }
+      if (/(user|query|question|request)/.test(markerText)) {
+        return true;
+      }
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.width < window.innerWidth * 0.75 && text.length >= 3 && text.length <= 12000;
+    }
+
+    if (isYuanbaoHost()) {
+      if (/(assistant|answer|reply|markdown|thought|reason|output)/.test(markerText)) {
+        return false;
+      }
+      if (/(title|topic|session|history|sidebar|menu|header)/.test(markerText)) {
+        return false;
+      }
+      if (/(user|query|question|request)/.test(markerText)) {
+        return true;
+      }
+      return false;
+    }
+
     if (/(user|query|question|request)/.test(markerText)) {
       return true;
     }
@@ -534,7 +608,7 @@
       return;
     }
 
-    state.status.textContent = `${state.config.label || "已适配"}，侧栏按用户发起消息的先后顺序展示。`;
+    state.status.textContent = `${state.config.label || "已适配"}，侧栏按当前聊天区已加载的用户提问顺序展示。长会话请先向上滚动聊天区。`;
   }
 
   function renderList(messages) {
@@ -654,6 +728,7 @@
       document.removeEventListener("keydown", onKeyDown, true);
     };
   }
+
 
   function stopPicker() {
     state.cleanupPicker?.();
@@ -853,6 +928,103 @@
     return sortByDomOrder(filterNestedElements(candidates)).slice(0, 200);
   }
 
+  function queryGeminiFallbackMessages(container) {
+    const candidates = Array.from(container.querySelectorAll("user-query, article, li, section, div"))
+      .filter((element) => {
+        if (!(element instanceof Element) || !isVisible(element)) {
+          return false;
+        }
+        if (element.closest("header, nav, aside")) {
+          return false;
+        }
+
+        const text = extractReadableText(element);
+        if (text.length < 3 || text.length > 12000) {
+          return false;
+        }
+
+        const markerText = `${element.tagName.toLowerCase()} ${element.className || ""} ${element.getAttribute("data-test-id") || ""} ${element.getAttribute("data-testid") || ""} ${element.getAttribute("data-role") || ""}`.toLowerCase();
+        if (/(assistant|answer|reply|markdown|model-response|response-container|thought|reason|output|title|topic|session|history|sidebar|menu|header)/.test(markerText)) {
+          return false;
+        }
+
+        if (element.tagName.toLowerCase() === "user-query") {
+          return true;
+        }
+
+        return /(user|query|question|request)/.test(markerText);
+      });
+
+    return sortByDomOrder(filterNestedElements(candidates)).slice(0, 300);
+  }
+
+  function queryQianwenFallbackMessages(container) {
+    const containerRect = container.getBoundingClientRect();
+    const candidates = Array.from(container.querySelectorAll("article, li, section, div"))
+      .filter((element) => {
+        if (!(element instanceof Element) || !isVisible(element)) {
+          return false;
+        }
+        if (element.closest("header, nav, aside")) {
+          return false;
+        }
+
+        const text = extractReadableText(element);
+        if (text.length < 3 || text.length > 12000) {
+          return false;
+        }
+
+        const markerText = `${element.className || ""} ${element.getAttribute("data-testid") || ""} ${element.getAttribute("data-role") || ""} ${element.getAttribute("data-message-author-role") || ""}`.toLowerCase();
+        if (/(assistant|answer|reply|markdown|thought|reason|output|title|topic|session|history|sidebar|menu)/.test(markerText)) {
+          return false;
+        }
+
+        if (/(user|query|question|request)/.test(markerText)) {
+          return true;
+        }
+
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.width < containerRect.width * 0.78 && element.children.length <= 16;
+      });
+
+    return sortByDomOrder(filterNestedElements(candidates)).slice(0, 200);
+  }
+
+  function queryYuanbaoFallbackMessages(container) {
+    const containerRect = container.getBoundingClientRect();
+    const containerCenterX = containerRect.left + containerRect.width / 2;
+    const candidates = Array.from(container.querySelectorAll("article, li, section, div"))
+      .filter((element) => {
+        if (!(element instanceof Element) || !isVisible(element)) {
+          return false;
+        }
+        if (element.closest("header, nav, aside")) {
+          return false;
+        }
+
+        const text = extractReadableText(element);
+        if (text.length < 3 || text.length > 12000) {
+          return false;
+        }
+
+        const markerText = `${element.className || ""} ${element.getAttribute("data-testid") || ""} ${element.getAttribute("data-role") || ""} ${element.getAttribute("data-message-author-role") || ""}`.toLowerCase();
+        if (/(assistant|answer|reply|markdown|thought|reason|output|title|topic|session|history|sidebar|menu|header)/.test(markerText)) {
+          return false;
+        }
+
+        if (/(user|query|question|request)/.test(markerText)) {
+          return true;
+        }
+
+        const rect = element.getBoundingClientRect();
+        const elementCenterX = rect.left + rect.width / 2;
+        const isUserSideBubble = elementCenterX > containerCenterX && rect.width < containerRect.width * 0.82;
+        return isUserSideBubble && element.children.length <= 16;
+      });
+
+    return sortByDomOrder(filterNestedElements(candidates)).slice(0, 200);
+  }
+
   function extractReadableText(element) {
     const rawText = normalizeText(element.innerText || element.textContent || "");
     return stripSpeakerPrefix(rawText);
@@ -893,6 +1065,7 @@
     return Array.from(new Set(list.filter(Boolean)));
   }
 
+
   function shortenPreview(text) {
     const normalized = text.replace(/\s+/g, " ").trim();
     if (normalized.length <= 15) {
@@ -914,6 +1087,18 @@
 
   function isDoubaoHost() {
     return location.host === "www.doubao.com" || location.host === "doubao.com";
+  }
+
+  function isGeminiHost() {
+    return location.host === "gemini.google.com";
+  }
+
+  function isQianwenHost() {
+    return location.host === "tongyi.aliyun.com" || location.host === "www.tongyi.com";
+  }
+
+  function isYuanbaoHost() {
+    return location.host === "yuanbao.tencent.com";
   }
 
   function syncPanelLayout(container) {
@@ -990,4 +1175,5 @@
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
   }
+
 })();

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI Chat Context Sidebar",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "为 AI 聊天页面生成用户消息侧栏目录，支持快速定位到指定内容。",
   "icons": {
     "16": "icons/icon16.png",
@@ -13,12 +13,32 @@
     "storage"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://www.doubao.com/*",
+    "https://doubao.com/*",
+    "https://claude.ai/*",
+    "https://kimi.moonshot.cn/*",
+    "https://chat.deepseek.com/*",
+    "https://yuanbao.tencent.com/*",
+    "https://tongyi.aliyun.com/*",
+    "https://www.tongyi.com/*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "<all_urls>"
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://www.doubao.com/*",
+        "https://doubao.com/*",
+        "https://claude.ai/*",
+        "https://kimi.moonshot.cn/*",
+        "https://chat.deepseek.com/*",
+        "https://yuanbao.tencent.com/*",
+        "https://tongyi.aliyun.com/*",
+        "https://www.tongyi.com/*"
       ],
       "js": [
         "content.js"
